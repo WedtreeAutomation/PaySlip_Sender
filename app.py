@@ -607,7 +607,6 @@ with tab1:
         st.error("❌ Please initialize Google Drive connection first")
     else:
         st.markdown('<div class="info-box">Please upload both PDF and Excel files to continue</div>', unsafe_allow_html=True)
-        st.info("💡 Need sample files? Contact your system administrator.")
 
 with tab2:
     # ---------------------------------------------------
@@ -705,10 +704,10 @@ with tab3:
     # Shared Drive ID configuration
     shared_drive_id = st.text_input(
         "Shared Drive ID",
-        value=st.session_state.shared_drive_id or "",
+        value=st.session_state.shared_drive_id or "0AMGgmW1LqUijUk9PVA",
         help="Enter the ID of your Google Shared Drive"
     )
-    
+        
     if st.button("💾 Save Settings"):
         st.session_state.shared_drive_id = shared_drive_id
         st.success("Settings saved successfully!")
