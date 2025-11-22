@@ -25,6 +25,10 @@ QIK_TEMPLATE_ID = os.getenv("QIK_TEMPLATE_ID")
 QIK_SERVICE = os.getenv("QIK_SERVICE")
 QIK_SHORTEN_URL = os.getenv("QIK_SHORTEN_URL")
 
+# Login credentials
+HR_USERNAME = os.getenv("HR_USERNAME")
+HR_PASSWORD = os.getenv("HR_PASSWORD")
+
 class PayslipDistributorStreamlit:
     def __init__(self):
         self.shared_drive_id = os.getenv("SHARED_DRIVE_ID")
@@ -34,6 +38,8 @@ class PayslipDistributorStreamlit:
     def initialize_session_state(self):
         """Initialize session state variables"""
         defaults = {
+            'authenticated': False,
+            'username': '',
             'sent_numbers': {},
             'log_entries': [],
             'current_folder': None,
@@ -52,8 +58,9 @@ class PayslipDistributorStreamlit:
             'current_path': 'Root',
             'selected_items': [],
             'show_delete_confirm': False,
-            'drive_page': 0,  # Add pagination state
-            'items_per_page': 10  # Add items per page
+            'drive_page': 0,
+            'items_per_page': 15,
+            'current_page': 'payslips'
         }
         for key, value in defaults.items():
             if key not in st.session_state:
@@ -67,302 +74,447 @@ class PayslipDistributorStreamlit:
             initial_sidebar_state="expanded"
         )
         
-        # Enhanced modern CSS styling
+        # Enhanced professional CSS styling - LIGHT SIDEBAR EDITION
         st.markdown("""
         <style>
         /* Import Google Fonts */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
         
         /* Global Styles */
-        .main {
-            font-family: 'Inter', sans-serif;
+        * {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         }
         
-        /* Header Styles */
-        .main-header {
+        .main {
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8f0 100%);
+        }
+        
+        /* Sidebar Styles - LIGHT THEME */
+        [data-testid="stSidebar"] {
+            background-color: #ffffff;
+            border-right: 1px solid #e5e7eb;
+        }
+        
+        [data-testid="stSidebar"] .stMarkdown {
+            color: #374151; /* Dark gray text */
+        }
+
+        /* Sidebar Header Styles */
+        .sidebar-header {
+            padding: 1.5rem 1rem;
+            text-align: center;
+            border-bottom: 2px solid #f3f4f6;
+            margin-bottom: 1.5rem;
+        }
+        
+        .sidebar-logo {
             font-size: 3rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .sidebar-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #111827; /* Almost black */
+            margin-bottom: 0.3rem;
+        }
+        
+        .sidebar-subtitle {
+            font-size: 0.85rem;
+            color: #6b7280; /* Gray */
+        }
+        
+        /* Sidebar User Info Box - Light Theme */
+        .user-info {
+            background: #f9fafb;
+            padding: 1rem;
+            border-radius: 12px;
+            margin: 1rem;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        
+        .user-name {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 0.3rem;
+        }
+        
+        .user-status {
+            font-size: 0.8rem;
+            color: #10b981;
+            font-weight: 500;
+        }
+
+        /* Sidebar Navigation Title */
+        .nav-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.5rem;
+            padding: 0 0.5rem;
+            margin-top: 1rem;
+        }
+
+        /* Sidebar Login Form Styles */
+        .sidebar-login-container {
+            padding: 1rem;
+            background: #f9fafb;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+        }
+
+        /* Main Content Header */
+        .page-header {
+            background: white;
+            padding: 2rem;
+            border-radius: 16px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 2rem;
+            animation: fadeIn 0.5s ease-out;
+        }
+        
+        .page-title {
+            font-size: 2.5rem;
             font-weight: 700;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            text-align: center;
             margin-bottom: 0.5rem;
-            padding: 1rem 0;
         }
         
-        .sub-header {
+        .page-subtitle {
             font-size: 1.1rem;
             color: #6b7280;
-            text-align: center;
-            margin-bottom: 2.5rem;
             font-weight: 500;
         }
         
+        /* Section Headers */
         .section-header {
-            font-size: 1.4rem;
+            font-size: 1.3rem;
             font-weight: 600;
             color: #1f2937;
-            margin-top: 2rem;
-            margin-bottom: 1.5rem;
-            padding: 0.75rem 1rem;
-            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+            margin: 2rem 0 1.5rem 0;
+            padding: 1rem 1.5rem;
+            background: white;
             border-left: 4px solid #667eea;
             border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
         
         /* Card Styles */
         .metric-card {
             background: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.07);
+            padding: 1.8rem;
+            border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
             border: 1px solid #e5e7eb;
-            transition: transform 0.2s, box-shadow 0.2s;
+            transition: all 0.3s ease;
+            height: 100%;
         }
         
         .metric-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 12px rgba(0,0,0,0.12);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(102, 126, 234, 0.15);
+        }
+        
+        .metric-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
         }
         
         .metric-value {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #667eea;
+            font-size: 2.8rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
             margin: 0.5rem 0;
         }
         
         .metric-label {
             font-size: 0.9rem;
             color: #6b7280;
-            font-weight: 500;
+            font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
         
-        /* Status Boxes */
-        .success-box {
-            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-            border: 2px solid #28a745;
-            border-radius: 12px;
-            padding: 1.25rem;
-            margin: 1rem 0;
-            box-shadow: 0 4px 6px rgba(40, 167, 69, 0.1);
-        }
-        
-        .error-box {
-            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-            border: 2px solid #dc3545;
-            border-radius: 12px;
-            padding: 1.25rem;
-            margin: 1rem 0;
-            box-shadow: 0 4px 6px rgba(220, 53, 69, 0.1);
-        }
-        
-        .info-box {
-            background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
-            border: 2px solid #17a2b8;
-            border-radius: 12px;
-            padding: 1.25rem;
-            margin: 1rem 0;
-            box-shadow: 0 4px 6px rgba(23, 162, 184, 0.1);
-        }
-        
-        .warning-box {
-            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-            border: 2px solid #ffc107;
-            border-radius: 12px;
-            padding: 1.25rem;
-            margin: 1rem 0;
-            box-shadow: 0 4px 6px rgba(255, 193, 7, 0.1);
-        }
-        
-        /* Log Box */
-        .log-box {
-            background: #1e293b;
-            color: #e2e8f0;
+        /* Activity Log */
+        .log-container {
+            background: white;
             border-radius: 12px;
             padding: 1.5rem;
-            margin: 1rem 0;
+            margin-top: 2rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        
+        .log-header {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .log-box {
+            background: #f8fafc;
+            color: #334155;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 1.5rem;
             max-height: 400px;
             overflow-y: auto;
             font-family: 'Courier New', monospace;
             font-size: 0.85rem;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
-        }
-        
-        .log-box::-webkit-scrollbar {
-            width: 8px;
-        }
-        
-        .log-box::-webkit-scrollbar-track {
-            background: #0f172a;
-            border-radius: 4px;
-        }
-        
-        .log-box::-webkit-scrollbar-thumb {
-            background: #475569;
-            border-radius: 4px;
-        }
-        
-        /* Drive Item Styles */
-        .drive-item {
-            background: white;
-            padding: 1rem;
-            margin: 0.5rem 0;
-            border-radius: 8px;
-            border: 1px solid #e5e7eb;
-            transition: all 0.2s;
-        }
-        
-        .drive-item:hover {
-            background: #f9fafb;
-            border-color: #667eea;
-            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.1);
-        }
-        
-        .drive-folder {
-            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+            line-height: 1.6;
         }
         
         /* Button Enhancements */
         .stButton > button {
             border-radius: 8px;
             font-weight: 500;
-            transition: all 0.2s;
-            border: none;
+            transition: all 0.3s ease;
+            /* CHANGED: Replaced 'border: none;' with a light crystal blue border */
+            border: 2px solid #89cff0 !important; 
+            font-size: 0.95rem;
         }
         
         .stButton > button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+            /* CHANGED: Slight glow effect on hover using the same blue */
+            box-shadow: 0 6px 12px rgba(137, 207, 240, 0.4);
+            border-color: #4fb3f7 !important;
         }
         
         /* Status Badge */
         .status-badge {
-            display: inline-block;
-            padding: 0.35rem 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
             border-radius: 20px;
             font-size: 0.85rem;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
+
+        .status-connected { background: #d4edda; color: #155724; border: 2px solid #28a745; }
+        .status-disconnected { background: #f8d7da; color: #721c24; border: 2px solid #dc3545; }
         
-        .status-connected {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+        /* Connection Status Box in Sidebar */
+        .sidebar-status-box {
+            padding: 0.75rem; 
+            background: #f1f5f9; 
+            border-radius: 8px; 
+            margin: 0.5rem 0;
+            border: 1px solid #e2e8f0;
         }
-        
-        .status-disconnected {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        /* Progress Bar Enhancement */
-        .stProgress > div > div > div {
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        }
-        
-        /* Tab Styling */
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
-        }
-        
-        .stTabs [data-baseweb="tab"] {
-            border-radius: 8px 8px 0 0;
-            font-weight: 500;
-        }
-        
-        /* File uploader enhancement */
-        .uploadedFile {
-            border-radius: 8px;
-        }
-        
-        /* Breadcrumb */
-        .breadcrumb {
-            background: #f3f4f6;
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-            font-size: 0.9rem;
-            color: #4b5563;
-        }
-        
-        .breadcrumb-item {
-            display: inline-block;
-            margin: 0 0.5rem;
-        }
-        
-        /* Animation */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .animated {
-            animation: fadeIn 0.5s ease-out;
-        }
-        
-        /* Delete button styling */
-        .delete-btn {
-            background: #dc3545 !important;
-            color: white !important;
-        }
-        
-        .delete-btn:hover {
-            background: #c82333 !important;
-        }
+
+        /* Hide Streamlit branding */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
         </style>
         """, unsafe_allow_html=True)
 
+    def render_welcome_screen(self):
+        """Render the welcome screen in the main area when not logged in"""
+        st.markdown("""
+        <div style="text-align: center; padding: 4rem 2rem;">
+            <div style="font-size: 5rem; margin-bottom: 1rem;">👋</div>
+            <h1 style="color: #1f2937; font-weight: 800; margin-bottom: 1rem;">Welcome Back!</h1>
+            <p style="font-size: 1.2rem; color: #6b7280; max-width: 600px; margin: 0 auto;">
+                Please log in using the form in the sidebar to access the Payslip Distribution System and HR Portal tools.
+            </p>
+            <div style="margin-top: 3rem; padding: 2rem; background: white; border-radius: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                <div style="color: #667eea; font-weight: 600; margin-bottom: 0.5rem;">System Status</div>
+                <div style="display: flex; gap: 2rem; justify-content: center;">
+                    <div>
+                        <div style="font-size: 1.5rem;">🔒</div>
+                        <div style="font-size: 0.9rem; color: #6b7280;">Secure Access</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 1.5rem;">⚡</div>
+                        <div style="font-size: 0.9rem; color: #6b7280;">Fast Processing</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 1.5rem;">☁️</div>
+                        <div style="font-size: 0.9rem; color: #6b7280;">Cloud Storage</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    def render_sidebar(self):
+        """Render the sidebar navigation and login"""
+        with st.sidebar:
+            # Sidebar Header
+            st.markdown(f"""
+            <div class="sidebar-header">
+                <div class="sidebar-logo">📄</div>
+                <div class="sidebar-title">Payslip System</div>
+                <div class="sidebar-subtitle">HR Portal</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if not st.session_state.authenticated:
+                # LOGIN FORM INSIDE SIDEBAR
+                st.markdown('<div class="nav-title">🔐 Login Required</div>', unsafe_allow_html=True)
+                
+                with st.form("sidebar_login_form"):
+                    st.markdown('<div class="sidebar-login-container">', unsafe_allow_html=True)
+                    username = st.text_input("Username", placeholder="Enter ID")
+                    password = st.text_input("Password", type="password", placeholder="Enter Password")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    submit = st.form_submit_button("🚀 Sign In", use_container_width=True, type="primary")
+
+                    if submit:
+                        if username == HR_USERNAME and password == HR_PASSWORD:
+                            st.session_state.authenticated = True
+                            st.session_state.username = username
+                            self.log_message(f"✅ User logged in: {username}")
+                            st.success("Login successful!")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error("Invalid credentials")
+                
+                st.info("Please enter your HR credentials to access the system.")
+
+            else:
+                # LOGGED IN NAVIGATION
+                
+                # User Info
+                st.markdown(f"""
+                <div class="user-info">
+                    <div class="user-name">👤 {st.session_state.username}</div>
+                    <div class="user-status">● Online</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Navigation Section
+                st.markdown('<div class="nav-title">📍 Navigation</div>', unsafe_allow_html=True)
+                
+                if st.button("📤 Send Payslips", use_container_width=True, 
+                            type="primary" if st.session_state.current_page == 'payslips' else "secondary"):
+                    st.session_state.current_page = 'payslips'
+                    st.rerun()
+                
+                if st.button("📁 Drive Explorer", use_container_width=True,
+                            type="primary" if st.session_state.current_page == 'drive' else "secondary"):
+                    st.session_state.current_page = 'drive'
+                    st.rerun()
+                
+                if st.button("📨 Send SMS", use_container_width=True,
+                            type="primary" if st.session_state.current_page == 'sms' else "secondary"):
+                    st.session_state.current_page = 'sms'
+                    st.rerun()
+                
+                st.markdown("---")
+                
+                # System Status
+                st.markdown('<div class="nav-title">📊 System Status</div>', unsafe_allow_html=True)
+                
+                drive_status = "Connected" if st.session_state.drive_initialized else "Disconnected"
+                drive_color = "#15803d" if st.session_state.drive_initialized else "#b91c1c" # Green/Red
+                
+                st.markdown(f"""
+                <div class="sidebar-status-box">
+                    <div style="color: #64748b; font-size: 0.8rem; margin-bottom: 0.3rem;">Google Drive</div>
+                    <div style="color: {drive_color}; font-weight: 600;">● {drive_status}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                <div class="sidebar-status-box">
+                    <div style="color: #64748b; font-size: 0.8rem; margin-bottom: 0.3rem;">Active Sessions</div>
+                    <div style="color: #059669; font-weight: 600;">{len(st.session_state.sent_numbers)} Uploads</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown("---")
+                
+                # Quick Actions
+                st.markdown('<div class="nav-title">⚡ Quick Actions</div>', unsafe_allow_html=True)
+                
+                if st.button("🔄 Refresh Session", use_container_width=True):
+                    st.rerun()
+                
+                if st.button("🗑️ Clear Data", use_container_width=True):
+                    self.reset_session()
+                
+                st.markdown("---")
+                
+                # Logout
+                if st.button("🚪 Logout", use_container_width=True, type="secondary"):
+                    st.session_state.authenticated = False
+                    st.session_state.username = ''
+                    self.log_message("👋 User logged out")
+                    st.rerun()
+
     def run(self):
-        # Animated header
-        st.markdown('<div class="main-header animated">📄 Payslip Distribution System</div>', unsafe_allow_html=True)
-        st.markdown('<div class="sub-header animated">Fast, Secure & Efficient Employee Payslip Distribution via Google Drive</div>', unsafe_allow_html=True)
+        # Always render sidebar (handles login form or nav menu)
+        self.render_sidebar()
+        
+        # Check authentication for main content
+        if not st.session_state.authenticated:
+            self.render_welcome_screen()
+            return
+        
+        # Render current page (Only if authenticated)
+        if st.session_state.current_page == 'payslips':
+            self.render_payslips_page()
+        elif st.session_state.current_page == 'drive':
+            self.render_drive_page()
+        elif st.session_state.current_page == 'sms':
+            self.render_sms_page()
+        
+        # Activity Log (always visible at bottom when logged in)
+        self.render_activity_log()
 
-        # Tabs with icons
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "📤 Send Payslips", 
-            "📁 Drive Explorer", 
-            "📨 Send SMS", 
-            "⚙️ Settings"
-        ])
+    # ------------------------------------------------------------------
+    #  EXISTING LOGIC METHODS (Unchanged)
+    # ------------------------------------------------------------------
 
-        with tab1:
-            self.render_send_tab()
-        with tab2:
-            self.render_drive_tab()
-        with tab3:
-            self.render_sms_tab()
-        with tab4:
-            self.render_settings_tab()
-
-        # Enhanced activity log
-        st.markdown('<div class="section-header">📜 Activity Log</div>', unsafe_allow_html=True)
-        if st.session_state.log_entries:
-            log_html = '<div class="log-box">'
-            for entry in reversed(st.session_state.log_entries[-100:]):
-                log_html += f'<div>{entry}</div>'
-            log_html += '</div>'
-            st.markdown(log_html, unsafe_allow_html=True)
-        else:
-            st.info("💤 No activity yet. Start by initializing Google Drive connection.")
-
-    def render_send_tab(self):
-        st.markdown('<div class="section-header">🔐 Google Drive Connection</div>', unsafe_allow_html=True)
+    def render_payslips_page(self):
+        """Render the Send Payslips page"""
+        st.markdown("""
+        <div class="page-header">
+            <div class="page-title">📤 Send Payslips</div>
+            <div class="page-subtitle">Upload and distribute employee payslips via Google Drive</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Google Drive Connection
+        st.markdown('<div class="section-header">🔗 Google Drive Connection</div>', unsafe_allow_html=True)
         
         col1, col2, col3 = st.columns([2, 2, 1])
         with col1:
-            if st.button("🚀 Initialize Google Drive Connection", type="primary", use_container_width=True):
+            if st.button("🚀 Initialize Connection", type="primary", use_container_width=True):
                 self.initialize_drive()
         with col2:
             if st.session_state.drive_initialized:
-                st.markdown('<span class="status-badge status-connected">✅ Connected</span>', unsafe_allow_html=True)
+                st.markdown('''
+                <div class="status-badge status-connected">
+                    <div style="width: 8px; height: 8px; background: #28a745; border-radius: 50%;"></div>
+                    <span>Connected</span>
+                </div>
+                ''', unsafe_allow_html=True)
             else:
-                st.markdown('<span class="status-badge status-disconnected">❌ Not Connected</span>', unsafe_allow_html=True)
+                st.markdown('''
+                <div class="status-badge status-disconnected">
+                    <div style="width: 8px; height: 8px; background: #dc3545; border-radius: 50%;"></div>
+                    <span>Disconnected</span>
+                </div>
+                ''', unsafe_allow_html=True)
         with col3:
             if st.session_state.drive_initialized:
                 if st.button("🔄 Reconnect", use_container_width=True):
@@ -372,7 +524,7 @@ class PayslipDistributorStreamlit:
             st.warning("⚠️ Please initialize Google Drive connection before proceeding.")
             return
 
-        # File upload section with enhanced UI
+        # File Upload Section
         st.markdown('<div class="section-header">📤 Upload Files</div>', unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
@@ -406,7 +558,7 @@ class PayslipDistributorStreamlit:
             else:
                 self.process_files(pdf_file, excel_file)
 
-        # Display analysis with metrics
+        # Display Analysis
         if st.session_state.files_processed:
             st.markdown('<div class="section-header">📊 File Analysis Results</div>', unsafe_allow_html=True)
             
@@ -414,7 +566,8 @@ class PayslipDistributorStreamlit:
             with col1:
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-label">📄 UANs Found</div>
+                    <div class="metric-icon">📄</div>
+                    <div class="metric-label">UANs Found</div>
                     <div class="metric-value">{st.session_state.pdf_count}</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -422,7 +575,8 @@ class PayslipDistributorStreamlit:
             with col2:
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-label">👥 Employees</div>
+                    <div class="metric-icon">👥</div>
+                    <div class="metric-label">Employees</div>
                     <div class="metric-value">{st.session_state.excel_count}</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -432,12 +586,13 @@ class PayslipDistributorStreamlit:
                              max(st.session_state.excel_count, 1) * 100)
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-label">🎯 Match Rate</div>
+                    <div class="metric-icon">🎯</div>
+                    <div class="metric-label">Match Rate</div>
                     <div class="metric-value">{match_rate:.0f}%</div>
                 </div>
                 """, unsafe_allow_html=True)
 
-            # Process payslips section
+            # Process Payslips
             st.markdown('<div class="section-header">🚀 Upload Payslips to Drive</div>', unsafe_allow_html=True)
             
             col1, col2 = st.columns([3, 1])
@@ -451,7 +606,7 @@ class PayslipDistributorStreamlit:
                 if st.button("📤 Start Upload", type="primary", disabled=not confirm, use_container_width=True):
                     self.process_payslips()
 
-        # Results display with enhanced metrics
+        # Results Display
         if st.session_state.processing_complete:
             st.markdown('<div class="section-header">📊 Upload Results</div>', unsafe_allow_html=True)
             
@@ -459,7 +614,8 @@ class PayslipDistributorStreamlit:
             with col1:
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-label">✅ Uploaded</div>
+                    <div class="metric-icon">✅</div>
+                    <div class="metric-label">Uploaded</div>
                     <div class="metric-value" style="color: #28a745;">{st.session_state.results.get('uploaded', 0)}</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -467,7 +623,8 @@ class PayslipDistributorStreamlit:
             with col2:
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-label">❌ Failed</div>
+                    <div class="metric-icon">❌</div>
+                    <div class="metric-label">Failed</div>
                     <div class="metric-value" style="color: #dc3545;">{st.session_state.results.get('failed', 0)}</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -475,7 +632,8 @@ class PayslipDistributorStreamlit:
             with col3:
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-label">⏭️ Skipped</div>
+                    <div class="metric-icon">⭐</div>
+                    <div class="metric-label">Skipped</div>
                     <div class="metric-value" style="color: #ffc107;">{st.session_state.results.get('skipped', 0)}</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -485,45 +643,44 @@ class PayslipDistributorStreamlit:
                 success_rate = (st.session_state.results.get('uploaded', 0) / max(total, 1) * 100)
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-label">📈 Success Rate</div>
+                    <div class="metric-icon">📈</div>
+                    <div class="metric-label">Success Rate</div>
                     <div class="metric-value" style="color: #667eea;">{success_rate:.0f}%</div>
                 </div>
                 """, unsafe_allow_html=True)
 
             if st.session_state.updated_excel_buffer:
                 st.markdown("---")
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    st.download_button(
-                        label="📥 Download Updated Excel File with Drive Links",
-                        data=st.session_state.updated_excel_buffer,
-                        file_name=f"payslip_links_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        use_container_width=True
-                    )
+                st.download_button(
+                    label="📥 Download Updated Excel File with Drive Links",
+                    data=st.session_state.updated_excel_buffer,
+                    file_name=f"payslip_links_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    use_container_width=True
+                )
 
-        # Reset section
-        st.markdown("---")
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col2:
-            if st.button("🔄 Reset Session", type="secondary", use_container_width=True):
-                self.reset_session()
-
-    def render_drive_tab(self):
-        st.markdown('<div class="section-header">📁 Google Drive Explorer</div>', unsafe_allow_html=True)
+    def render_drive_page(self):
+        """Render the Drive Explorer page"""
+        st.markdown("""
+        <div class="page-header">
+            <div class="page-title">📁 Drive Explorer</div>
+            <div class="page-subtitle">Browse and manage files in your Google Drive</div>
+        </div>
+        """, unsafe_allow_html=True)
         
         if not st.session_state.drive_initialized:
-            st.warning("⚠️ Please initialize Google Drive connection in the 'Send Payslips' tab first.")
+            st.warning("⚠️ Please initialize Google Drive connection in the 'Send Payslips' page first.")
             return
 
-        # Breadcrumb navigation
-        breadcrumb = "📁 Root"
+        # Breadcrumb Navigation
+        breadcrumb = "🏠 Root"
         if st.session_state.current_folder:
             breadcrumb += " > " + st.session_state.current_path
-        st.markdown(f'<div class="breadcrumb">{breadcrumb}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="background: #f3f4f6; padding: 0.75rem 1.25rem; border-radius: 8px; margin-bottom: 1rem; color: #4b5563; font-weight: 500;">{breadcrumb}</div>', unsafe_allow_html=True)
 
-        # Navigation controls with enhanced styling
+        # Navigation Controls
+        st.markdown('<div class="drive-header" style="background: white; padding: 1.5rem; border-radius: 12px; margin-bottom: 1rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">', unsafe_allow_html=True)
         col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
         with col1:
             if st.button("🏠 Root", use_container_width=True):
@@ -537,34 +694,39 @@ class PayslipDistributorStreamlit:
         with col4:
             if st.button("➕ New Folder", use_container_width=True):
                 st.session_state.show_new_folder = True
-        with col5:
-            st.empty()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        # New folder creation
+        # New Folder Creation
         if st.session_state.get('show_new_folder', False):
             with st.form("new_folder_form"):
-                folder_name = st.text_input("Folder Name")
+                folder_name = st.text_input("📁 Folder Name", placeholder="Enter folder name")
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.form_submit_button("Create", use_container_width=True):
+                    if st.form_submit_button("✅ Create", use_container_width=True, type="primary"):
                         if folder_name:
                             self.create_folder(folder_name)
                             st.session_state.show_new_folder = False
                             st.rerun()
                 with col2:
-                    if st.form_submit_button("Cancel", use_container_width=True):
+                    if st.form_submit_button("❌ Cancel", use_container_width=True):
                         st.session_state.show_new_folder = False
                         st.rerun()
 
         st.markdown("---")
         
-        # Display drive contents with delete functionality
+        # Display Drive Contents
         self.display_drive_contents()
 
-    def render_sms_tab(self):
-        st.markdown('<div class="section-header">📨 SMS Distribution</div>', unsafe_allow_html=True)
+    def render_sms_page(self):
+        """Render the SMS Distribution page"""
+        st.markdown("""
+        <div class="page-header">
+            <div class="page-title">📨 SMS Distribution</div>
+            <div class="page-subtitle">Send payslip notifications to employees via SMS</div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        st.info("📋 Upload the updated Excel file (with Drive Links) from the Send Payslips tab to send SMS notifications to employees.")
+        st.info("📋 Upload the updated Excel file (with Drive Links) from the Send Payslips page to send SMS notifications to employees.")
         
         if not st.session_state.drive_initialized:
             st.warning("⚠️ Please initialize Google Drive connection first.")
@@ -580,7 +742,7 @@ class PayslipDistributorStreamlit:
         if uploaded:
             st.success(f"✅ File uploaded: {uploaded.name}")
             
-            # Preview data
+            # Preview Data
             try:
                 preview_df = pd.read_excel(uploaded, dtype=str).fillna("")
                 st.markdown("**📋 Data Preview (First 5 rows)**")
@@ -588,106 +750,71 @@ class PayslipDistributorStreamlit:
                 
                 # Check for Drive Links
                 has_links = preview_df['Drive Link'].notna().sum() if 'Drive Link' in preview_df.columns else 0
-                st.info(f"📊 {has_links} employees have Drive Links and will receive SMS")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div class="metric-icon">👥</div>
+                        <div class="metric-label">Total Employees</div>
+                        <div class="metric-value">{len(preview_df)}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div class="metric-icon">🔗</div>
+                        <div class="metric-label">With Drive Links</div>
+                        <div class="metric-value">{has_links}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col3:
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div class="metric-icon">📨</div>
+                        <div class="metric-label">Ready to Send</div>
+                        <div class="metric-value">{has_links}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
             except Exception as e:
                 st.error(f"Error previewing file: {str(e)}")
 
         st.markdown("---")
         
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            if st.button("📤 Send SMS to All Employees with Drive Links", 
-                        type="primary", 
-                        use_container_width=True,
-                        disabled=not uploaded):
-                if uploaded:
-                    self.process_and_send_sms(uploaded)
+        if st.button("📤 Send SMS to All Employees with Drive Links", 
+                    type="primary", 
+                    use_container_width=True,
+                    disabled=not uploaded):
+            if uploaded:
+                self.process_and_send_sms(uploaded)
 
-    def render_settings_tab(self):
-        st.markdown('<div class="section-header">⚙️ System Configuration</div>', unsafe_allow_html=True)
+    def render_activity_log(self):
+        """Render activity log"""
+        st.markdown("""
+        <div class="log-container">
+            <div class="log-header">📜 Activity Log</div>
+        """, unsafe_allow_html=True)
         
-        # Drive settings
-        st.markdown("**🔧 Google Drive Settings**")
-        drive_id = st.text_input(
-            "Shared Drive ID",
-            value=st.session_state.shared_drive_id or self.shared_drive_id,
-            help="Enter your Google Shared Drive ID",
-            key="drive_id_input"
-        )
+        if st.session_state.log_entries:
+            log_html = '<div class="log-box">'
+            for entry in reversed(st.session_state.log_entries[-100:]):
+                log_html += f'<div>{entry}</div>'
+            log_html += '</div>'
+            st.markdown(log_html, unsafe_allow_html=True)
+        else:
+            st.info("💤 No activity yet. Start by initializing Google Drive connection.")
         
-        if st.button("💾 Save Drive Settings", type="primary", use_container_width=True):
-            st.session_state.shared_drive_id = drive_id
-            st.success("✅ Settings saved successfully!")
-            self.log_message("✅ Saved shared drive ID configuration")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown("---")
-        
-        # System status
-        st.markdown('<div class="section-header">📊 System Status</div>', unsafe_allow_html=True)
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            status = "Connected" if st.session_state.drive_initialized else "Disconnected"
-            status_color = "#28a745" if st.session_state.drive_initialized else "#dc3545"
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">Google Drive</div>
-                <div class="metric-value" style="color: {status_color}; font-size: 1.5rem;">{status}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">Active Sessions</div>
-                <div class="metric-value" style="font-size: 1.5rem;">{len(st.session_state.sent_numbers)}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">Log Entries</div>
-                <div class="metric-value" style="font-size: 1.5rem;">{len(st.session_state.log_entries)}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        st.markdown("---")
-        
-        # SMS Configuration
-        st.markdown("**📨 SMS Service Configuration**")
-        col1, col2 = st.columns(2)
-        with col1:
-            qik_status = "Configured" if QIK_URL and QIK_AUTH_TOKEN else "Not Configured"
-            st.info(f"Status: {qik_status}")
-        with col2:
-            if QIK_SENDER:
-                st.info(f"Sender: {QIK_SENDER}")
-
-        st.markdown("---")
-        
-        # Danger zone
-        st.markdown('<div class="section-header">⚠️ Danger Zone</div>', unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🗑️ Clear Session Data", type="secondary", use_container_width=True):
-                self.reset_session()
-                st.success("✅ Session data cleared")
-        
-        with col2:
-            if st.button("💣 Clear All Data", type="secondary", use_container_width=True):
-                self.clear_session_data()
-
-    # Core functionality methods
+    # Core functionality methods (unchanged)
     def initialize_drive(self):
-        """Initialize Google Drive connection"""
         with st.spinner("🔄 Connecting to Google Drive..."):
             try:
                 service = self.get_drive_service()
                 if service:
-                    # Test the connection
                     service.files().list(pageSize=1, supportsAllDrives=True).execute()
                     st.session_state.drive_service = service
                     st.session_state.drive_initialized = True
@@ -703,7 +830,6 @@ class PayslipDistributorStreamlit:
                 self.log_message(f"❌ Drive connection error: {str(e)}")
 
     def process_files(self, pdf_file, excel_file):
-        """Process uploaded PDF and Excel files"""
         progress_container = st.empty()
         
         with progress_container:
@@ -758,7 +884,6 @@ class PayslipDistributorStreamlit:
                     self.log_message(f"❌ Processing error: {str(e)}")
 
     def process_payslips(self):
-        """Extract and upload individual payslips to Drive"""
         if not st.session_state.files_processed or st.session_state.df is None:
             st.error("❌ Please process files first")
             return
@@ -887,7 +1012,6 @@ class PayslipDistributorStreamlit:
                 self.log_message(f"❌ Processing error: {str(e)}")
 
     def process_pdf(self, pdf_file):
-        """Extract UAN to page mapping from PDF"""
         uan_pages = {}
         try:
             pdf_file.seek(0)
@@ -905,7 +1029,6 @@ class PayslipDistributorStreamlit:
             return {}
 
     def extract_individual_payslip(self, pdf_file, uan, page_num):
-        """Extract single page as PDF"""
         pdf_reader = PdfReader(pdf_file)
         pdf_writer = PdfWriter()
         pdf_writer.add_page(pdf_reader.pages[page_num])
@@ -916,7 +1039,6 @@ class PayslipDistributorStreamlit:
 
     # Google Drive helper methods
     def get_google_credentials(self):
-        """Load Google service account credentials"""
         try:
             credentials_dict = {
                 "type": os.getenv("GOOGLE_SERVICE_ACCOUNT_TYPE"),
@@ -945,7 +1067,6 @@ class PayslipDistributorStreamlit:
             return None
 
     def get_drive_service(self):
-        """Initialize Google Drive service"""
         try:
             credentials = self.get_google_credentials()
             if credentials:
@@ -956,7 +1077,6 @@ class PayslipDistributorStreamlit:
             return None
 
     def get_monthly_folder_id(self, service, month_year, shared_drive_id):
-        """Get or create monthly folder with retry logic"""
         max_retries = 3
         retry_count = 0
         
@@ -1008,7 +1128,6 @@ class PayslipDistributorStreamlit:
         return None
 
     def upload_to_drive(self, service, file_buffer, filename, folder_id, shared_drive_id):
-        """Upload file to Drive with retry logic"""
         max_retries = 3
         retry_count = 0
         
@@ -1060,7 +1179,6 @@ class PayslipDistributorStreamlit:
         return None, None
 
     def list_drive_contents(self, service, shared_drive_id, folder_id=None):
-        """List Drive contents with error handling"""
         try:
             query = "trashed=false"
             
@@ -1091,7 +1209,6 @@ class PayslipDistributorStreamlit:
             return []
 
     def display_drive_contents(self):
-        """Display Drive contents with delete functionality and pagination"""
         try:
             contents = self.list_drive_contents(
                 st.session_state.drive_service,
@@ -1100,7 +1217,7 @@ class PayslipDistributorStreamlit:
             )
             
             if not contents:
-                st.info("📭 No files or folders found in this location.")
+                st.info("🔭 No files or folders found in this location.")
                 return
             
             # Calculate pagination
@@ -1109,17 +1226,16 @@ class PayslipDistributorStreamlit:
             total_pages = (total_items + items_per_page - 1) // items_per_page
             current_page = st.session_state.drive_page
             
-            # Ensure current page is within bounds
             if current_page >= total_pages:
                 st.session_state.drive_page = max(0, total_pages - 1)
                 current_page = st.session_state.drive_page
             
-            # Get items for current page
             start_idx = current_page * items_per_page
             end_idx = min(start_idx + items_per_page, total_items)
             page_contents = contents[start_idx:end_idx]
             
-            # Display pagination info and controls at top
+            # Pagination controls at top
+            st.markdown('<div class="pagination-controls" style="background: white; padding: 1rem; border-radius: 8px; margin-top: 1rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">', unsafe_allow_html=True)
             col1, col2, col3, col4, col5 = st.columns([2, 1, 2, 1, 2])
             
             with col1:
@@ -1145,29 +1261,26 @@ class PayslipDistributorStreamlit:
                     st.session_state.drive_page = total_pages - 1
                     st.rerun()
             
-            # Page number display
-            st.markdown(f"<div style='text-align: center; margin: 10px 0;'><strong>Page {current_page + 1} of {total_pages}</strong></div>", unsafe_allow_html=True)
+            st.markdown(f'<div style="text-align: center; font-weight: 600; color: #4b5563; margin: 0.5rem 0;">Page {current_page + 1} of {total_pages}</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
             
             st.markdown("---")
             
-            # Display header
+            # Display table
+            st.markdown('<div class="drive-table" style="background: white; border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">', unsafe_allow_html=True)
+            
+            # Header
             col1, col2, col3, col4, col5, col6 = st.columns([4, 1, 1, 2, 1.5, 1.5])
-            with col1:
-                st.markdown("**📝 Name**")
-            with col2:
-                st.markdown("**📂 Type**")
-            with col3:
-                st.markdown("**📊 Size**")
-            with col4:
-                st.markdown("**📅 Modified**")
-            with col5:
-                st.markdown("**⚡ Actions**")
-            with col6:
-                st.markdown("**🗑️ Delete**")
+            with col1: st.markdown("**📁 Name**")
+            with col2: st.markdown("**📂 Type**")
+            with col3: st.markdown("**📊 Size**")
+            with col4: st.markdown("**📅 Modified**")
+            with col5: st.markdown("**⚡ Actions**")
+            with col6: st.markdown("**🗑️ Delete**")
             
             st.markdown("---")
             
-            # Display each item on current page
+            # Display each item
             for item in page_contents:
                 is_folder = item['mimeType'] == 'application/vnd.google-apps.folder'
                 item_type = "📁" if is_folder else "📄"
@@ -1177,7 +1290,7 @@ class PayslipDistributorStreamlit:
                 col1, col2, col3, col4, col5, col6 = st.columns([4, 1, 1, 2, 1.5, 1.5])
                 
                 with col1:
-                    st.text(item['name'][:40] + "..." if len(item['name']) > 40 else item['name'])
+                    st.text(item['name'][:50] + "..." if len(item['name']) > 50 else item['name'])
                 with col2:
                     st.text(item_type)
                 with col3:
@@ -1197,12 +1310,14 @@ class PayslipDistributorStreamlit:
                 
                 st.markdown("---")
             
-            # Pagination controls at bottom (optional, for convenience)
-            st.markdown("---")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Pagination controls at bottom
+            st.markdown('<div class="pagination-controls" style="background: white; padding: 1rem; border-radius: 8px; margin-top: 1rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">', unsafe_allow_html=True)
             col1, col2, col3, col4, col5 = st.columns([2, 1, 2, 1, 2])
             
             with col1:
-                st.markdown(f"**📊 Page {current_page + 1} of {total_pages}**")
+                st.markdown(f'<div style="text-align: center; font-weight: 600; color: #4b5563; margin: 0.5rem 0;">Page {current_page + 1} of {total_pages}</div>', unsafe_allow_html=True)
             
             with col2:
                 if st.button("⏮️", key="first_bottom", disabled=current_page == 0, use_container_width=True):
@@ -1223,11 +1338,13 @@ class PayslipDistributorStreamlit:
                 if st.button("⏭️", key="last_bottom", disabled=current_page >= total_pages - 1, use_container_width=True):
                     st.session_state.drive_page = total_pages - 1
                     st.rerun()
+            
+            st.markdown('</div>', unsafe_allow_html=True)
                     
         except Exception as e:
             st.error(f"❌ Error displaying contents: {str(e)}")
+
     def create_folder(self, folder_name):
-        """Create a new folder in current location"""
         try:
             parent_id = st.session_state.current_folder or st.session_state.shared_drive_id
             
@@ -1251,7 +1368,6 @@ class PayslipDistributorStreamlit:
             self.log_message(f"❌ Folder creation failed: {str(e)}")
 
     def confirm_delete(self, file_id, file_name, is_folder):
-        """Show delete confirmation dialog"""
         item_type = "folder" if is_folder else "file"
         
         @st.dialog(f"Delete {item_type}?")
@@ -1272,7 +1388,6 @@ class PayslipDistributorStreamlit:
         delete_dialog()
 
     def delete_item(self, file_id, file_name, is_folder):
-        """Delete a file or folder from Drive"""
         try:
             st.session_state.drive_service.files().delete(
                 fileId=file_id,
@@ -1288,7 +1403,6 @@ class PayslipDistributorStreamlit:
             self.log_message(f"❌ Delete failed: {file_name} - {str(e)}")
 
     def navigate_to_folder(self, folder_id, folder_name=None):
-        """Navigate into a folder"""
         if st.session_state.current_folder:
             st.session_state.folder_stack.append({
                 'id': st.session_state.current_folder,
@@ -1296,11 +1410,10 @@ class PayslipDistributorStreamlit:
             })
         st.session_state.current_folder = folder_id
         st.session_state.current_path = folder_name or "Folder"
-        st.session_state.drive_page = 0  # Reset to first page when navigating
+        st.session_state.drive_page = 0
         st.rerun()
 
     def download_file(self, file_id, filename):
-        """Download a file from Drive"""
         with st.spinner(f"⬇️ Downloading {filename}..."):
             try:
                 request = st.session_state.drive_service.files().get_media(
@@ -1330,31 +1443,27 @@ class PayslipDistributorStreamlit:
                 self.log_message(f"❌ Download failed: {filename}")
 
     def go_to_root(self):
-        """Navigate to root folder"""
         st.session_state.current_folder = None
         st.session_state.current_path = 'Root'
         st.session_state.folder_stack = []
-        st.session_state.drive_page = 0  # Reset to first page
+        st.session_state.drive_page = 0
         st.rerun()
 
     def go_back(self):
-        """Go back to previous folder"""
         if st.session_state.folder_stack:
             prev = st.session_state.folder_stack.pop()
             st.session_state.current_folder = prev['id']
             st.session_state.current_path = prev['name']
-            st.session_state.drive_page = 0  # Reset to first page
+            st.session_state.drive_page = 0
             st.rerun()
         else:
             self.go_to_root()
 
     def refresh_drive(self):
-        """Refresh current view"""
-        st.session_state.drive_page = 0  # Reset to first page on refresh
+        st.session_state.drive_page = 0
         st.rerun()
 
     def format_phone_number(self, phone_str):
-        """Format phone to +91XXXXXXXXXX"""
         if pd.isna(phone_str) or str(phone_str).strip() == "":
             return ""
         
@@ -1372,7 +1481,6 @@ class PayslipDistributorStreamlit:
         return digits
 
     def send_sms_via_qik(self, name, phone, download_link, previous_month):
-        """Send SMS via Qik API"""
         if not phone:
             return False, "Empty phone"
         
@@ -1406,7 +1514,6 @@ class PayslipDistributorStreamlit:
             return False, str(e)
 
     def process_and_send_sms(self, excel_file):
-        """Process Excel and send SMS to employees with Drive Links"""
         try:
             df = pd.read_excel(excel_file, dtype=str).fillna("")
             
@@ -1447,7 +1554,7 @@ class PayslipDistributorStreamlit:
                         'phone': emp_no_raw,
                         'status': 'skipped_no_link'
                     })
-                    self.log_message(f"⏭️ Skipped {name} - No Drive Link")
+                    self.log_message(f"⭐ Skipped {name} - No Drive Link")
                     progress.progress((i+1)/total)
                     continue
                 
@@ -1459,7 +1566,7 @@ class PayslipDistributorStreamlit:
                         'phone': '',
                         'status': 'skipped_no_phone'
                     })
-                    self.log_message(f"⏭️ Skipped {name} - No phone")
+                    self.log_message(f"⭐ Skipped {name} - No phone")
                     progress.progress((i+1)/total)
                     continue
                 
@@ -1494,13 +1601,35 @@ class PayslipDistributorStreamlit:
             status.empty()
             
             # Display results
+            st.markdown('<div class="section-header">📊 SMS Distribution Results</div>', unsafe_allow_html=True)
+            
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.success(f"✅ Sent: {sent_count}")
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-icon">✅</div>
+                    <div class="metric-label">Sent</div>
+                    <div class="metric-value" style="color: #28a745;">{sent_count}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
             with col2:
-                st.error(f"❌ Failed: {failed_count}")
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-icon">❌</div>
+                    <div class="metric-label">Failed</div>
+                    <div class="metric-value" style="color: #dc3545;">{failed_count}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
             with col3:
-                st.warning(f"⏭️ Skipped: {skipped_count}")
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-icon">⭐</div>
+                    <div class="metric-label">Skipped</div>
+                    <div class="metric-value" style="color: #ffc107;">{skipped_count}</div>
+                </div>
+                """, unsafe_allow_html=True)
             
             self.log_message(f"📊 SMS Summary - Sent: {sent_count}, Failed: {failed_count}, Skipped: {skipped_count}")
             
@@ -1512,7 +1641,8 @@ class PayslipDistributorStreamlit:
                 data=csv_buf,
                 file_name=f"sms_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
-                use_container_width=True
+                use_container_width=True,
+                type="primary"
             )
             
         except Exception as e:
@@ -1520,7 +1650,6 @@ class PayslipDistributorStreamlit:
             self.log_message(f"❌ SMS error: {str(e)}")
 
     def reset_session(self):
-        """Reset processing session"""
         st.session_state.files_processed = False
         st.session_state.processing_complete = False
         st.session_state.results = {}
@@ -1535,21 +1664,19 @@ class PayslipDistributorStreamlit:
         st.rerun()
 
     def clear_session_data(self):
-        """Clear all session data including logs"""
         for key in list(st.session_state.keys()):
-            del st.session_state[key]
+            if key not in ['authenticated', 'username']:
+                del st.session_state[key]
         self.initialize_session_state()
         st.success("✅ All data cleared successfully!")
         time.sleep(1)
         st.rerun()
 
     def log_message(self, message):
-        """Add message to activity log with timestamp"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] {message}"
         st.session_state.log_entries.append(log_entry)
         
-        # Keep only last 500 entries
         if len(st.session_state.log_entries) > 500:
             st.session_state.log_entries = st.session_state.log_entries[-500:]
 
