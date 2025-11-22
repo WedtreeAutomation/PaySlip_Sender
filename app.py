@@ -369,7 +369,6 @@ class PayslipDistributorStreamlit:
                 st.markdown('<div class="nav-title">🔐 Login Required</div>', unsafe_allow_html=True)
                 
                 with st.form("sidebar_login_form"):
-                    st.markdown('<div class="sidebar-login-container">', unsafe_allow_html=True)
                     username = st.text_input("Username", placeholder="Enter ID")
                     password = st.text_input("Password", type="password", placeholder="Enter Password")
                     st.markdown('</div>', unsafe_allow_html=True)
