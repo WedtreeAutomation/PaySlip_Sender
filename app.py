@@ -890,8 +890,10 @@ class PayslipDistributorStreamlit:
                 preview_df = pd.read_excel(uploaded, dtype=str).fillna("")
                 st.markdown("**📋 Data Preview (First 5 rows)**")
                 st.dataframe(preview_df.head(), use_container_width=True)
-                
-                has_links = preview_df['Drive Link'].notna().sum() if 'Drive Link' in preview_df.columns else 0
+
+                has_links = 0
+                if 'Drive Link' in preview_df.columns:
+                    has_links = (preview_df['Drive Link'].str.strip() != "").sum()
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
