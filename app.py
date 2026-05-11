@@ -1508,8 +1508,9 @@ class PayslipDistributorStreamlit:
         return digits
 
     def send_sms_via_qik(self, name, phone, download_link, previous_month):
+        """Send SMS and return delivery tracking info"""
         if not phone:
-            return False, "Empty phone"
+            return False, "Empty phone", None
         
         template_message = (
             f"Hello! {name},\n\n"
@@ -1536,11 +1537,173 @@ class PayslipDistributorStreamlit:
         
         try:
             resp = requests.post(QIK_URL, headers=headers, json=payload, timeout=30)
-            return (resp.status_code in (200, 201)), resp.text
+            
+            # Extract message_id from response
+            message_id = None
+            response_data = None
+            full_response = resp.text
+            
+            if resp.status_code in (200, 201):
+                try:
+                    response_data = resp.json()
+                    # Extract message_id from the data array
+                    if response_data and 'data' in response_data:
+                        data_array = response_data['data']
+                        if data_array and len(data_array) > 0:
+                            # Get message_id from first item in data array
+                            message_id = data_array[0].get('message_id')
+                    
+                    # If not found in data array, try other common locations
+                    if not message_id:
+                        message_id = (
+                            response_data.get('message_id') or 
+                            response_data.get('messageId') or 
+                            response_data.get('id')
+                        )
+                except json.JSONDecodeError:
+                    pass
+            
+            return (resp.status_code in (200, 201)), full_response, message_id
+            
         except Exception as e:
-            return False, str(e)
+            return False, str(e), None
+            
+    
+        
+    def get_sms_status(self, message_ids):
+        """
+        Fetch SMS delivery status for multiple message IDs
+        Returns raw API response without any mapping
+        """
+        if not message_ids:
+            return {}
+        
+        # Handle single ID or list
+        if isinstance(message_ids, str):
+            message_ids = [message_ids]
+        
+        # Filter out None or empty values
+        message_ids = [mid for mid in message_ids if mid]
+        
+        if not message_ids:
+            return {}
+        
+        headers = {
+            "Authorization": QIK_AUTH_TOKEN,
+            "Content-Type": "application/json"
+        }
+        
+        status_url = "https://rest.qikberry.ai/v1/sms/status"
+        
+        results = {}
+        
+        # Make individual calls for each message_id
+        for message_id in message_ids:
+            params = {
+                "message_ids": message_id
+            }
+            
+            try:
+                self.log_message(f"🔍 Fetching status for message_id: {message_id}")
+                
+                resp = requests.get(status_url, headers=headers, params=params, timeout=30)
+                
+                self.log_message(f"📡 Status API Response Code: {resp.status_code} for {message_id}")
+                
+                if resp.status_code == 200:
+                    try:
+                        data = resp.json()
+                        # Store the full response as JSON string
+                        full_response_json = json.dumps(data, indent=2)
+                        
+                        # Parse the response to extract all fields
+                        if isinstance(data, dict) and 'data' in data and isinstance(data['data'], list):
+                            for item in data['data']:
+                                mid = item.get('message_id')
+                                if mid == message_id:
+                                    # Store ALL raw data from the API without any mapping
+                                    results[message_id] = {
+                                        # Store the complete original response
+                                        'full_response': full_response_json,
+                                        # Store all individual fields as they come from API
+                                        'raw_status': item.get('status', ''),
+                                        'raw_message_id': item.get('message_id', ''),
+                                        'raw_phone': item.get('phone', ''),
+                                        'raw_isoCode': item.get('isoCode', ''),
+                                        'raw_service': item.get('service', ''),
+                                        'raw_message': item.get('message', ''),
+                                        'raw_sender': item.get('sender', ''),
+                                        'raw_template_id': item.get('template_id', ''),
+                                        'raw_flash': item.get('flash', ''),
+                                        'raw_unicode': item.get('unicode', ''),
+                                        'raw_length': item.get('length', ''),
+                                        'raw_units': item.get('units', ''),
+                                        'raw_charges': item.get('charges', ''),
+                                        'raw_source': item.get('source', ''),
+                                        'raw_submit_time': item.get('submit_time', ''),
+                                        'raw_submit_at': item.get('submit_at', ''),
+                                        'raw_deliv_time': item.get('deliv_time', ''),
+                                        'raw_deliv_at': item.get('deliv_at', ''),
+                                        # Additional metadata from response wrapper
+                                        'api_message': data.get('message', ''),
+                                        'api_page': data.get('page', ''),
+                                        'api_length': data.get('length', '')
+                                    }
+                                    self.log_message(f"✅ Raw status for {message_id}: {item.get('status', 'UNKNOWN')}")
+                                    break
+                        else:
+                            # Store unexpected response format as is
+                            results[message_id] = {
+                                'full_response': full_response_json,
+                                'raw_status': 'unknown_format',
+                                'error_message': 'Unexpected response format'
+                            }
+                            
+                    except json.JSONDecodeError as e:
+                        self.log_message(f"❌ JSON decode error for {message_id}: {str(e)}")
+                        results[message_id] = {
+                            'full_response': resp.text,
+                            'raw_status': 'json_error',
+                            'error_message': f'Invalid JSON: {str(e)}'
+                        }
+                        
+                elif resp.status_code == 401:
+                    self.log_message(f"⚠️ SMS Status API Authentication Failed for {message_id}")
+                    results[message_id] = {
+                        'full_response': resp.text,
+                        'raw_status': 'auth_failed',
+                        'error_message': 'Authentication failed'
+                    }
+                else:
+                    self.log_message(f"⚠️ SMS Status API returned {resp.status_code} for {message_id}")
+                    results[message_id] = {
+                        'full_response': resp.text,
+                        'raw_status': f'http_{resp.status_code}',
+                        'error_message': resp.text[:200]
+                    }
+                    
+            except requests.exceptions.Timeout:
+                self.log_message(f"⚠️ SMS Status API timeout for {message_id}")
+                results[message_id] = {
+                    'full_response': '',
+                    'raw_status': 'timeout',
+                    'error_message': 'Request timeout'
+                }
+            except Exception as e:
+                self.log_message(f"⚠️ SMS Status API error for {message_id}: {str(e)}")
+                results[message_id] = {
+                    'full_response': '',
+                    'raw_status': 'error',
+                    'error_message': str(e)
+                }
+            
+            # Small delay to avoid rate limiting
+            time.sleep(0.1)
+        
+        return results
 
     def process_and_send_sms(self, excel_file):
+        """Enhanced SMS sending with raw API response capture"""
         try:
             df = pd.read_excel(excel_file, dtype=str).fillna("")
             
@@ -1564,12 +1727,16 @@ class PayslipDistributorStreamlit:
             skipped_count = 0
             results = []
             
+            # Store message_ids for later status lookup
+            message_ids_list = []
+            
+            # First pass: Send SMS and collect message_ids
             for i, row in df.iterrows():
                 name = row['Employee Name']
                 emp_no_raw = str(row['Employee no']).strip()
                 drive_link = str(row['Drive Link']).strip()
                 
-                status.info(f"⏳ Processing {i+1}/{total}: {name}")
+                status.info(f"⏳ Sending SMS {i+1}/{total}: {name}")
                 
                 if not drive_link:
                     skipped_count += 1
@@ -1577,7 +1744,31 @@ class PayslipDistributorStreamlit:
                         'row': i+1,
                         'name': name,
                         'phone': emp_no_raw,
-                        'status': 'skipped_no_link'
+                        'send_status': 'skipped_no_link',
+                        'send_response': 'No Drive Link available',
+                        'message_id': '',
+                        # Status API fields (empty for skipped)
+                        'api_raw_status': '',
+                        'api_full_response': '',
+                        'api_phone': '',
+                        'api_isoCode': '',
+                        'api_service': '',
+                        'api_message_preview': '',
+                        'api_sender': '',
+                        'api_template_id': '',
+                        'api_flash': '',
+                        'api_unicode': '',
+                        'api_length': '',
+                        'api_units': '',
+                        'api_charges': '',
+                        'api_source': '',
+                        'api_submit_time': '',
+                        'api_submit_at': '',
+                        'api_deliv_time': '',
+                        'api_deliv_at': '',
+                        'api_response_message': '',
+                        'api_page': '',
+                        'api_length_count': ''
                     })
                     self.log_message(f"⭐ Skipped {name} - No Drive Link")
                     progress.progress((i+1)/total)
@@ -1589,89 +1780,320 @@ class PayslipDistributorStreamlit:
                         'row': i+1,
                         'name': name,
                         'phone': '',
-                        'status': 'skipped_no_phone'
+                        'send_status': 'skipped_no_phone',
+                        'send_response': 'No phone number',
+                        'message_id': '',
+                        # Status API fields (empty for skipped)
+                        'api_raw_status': '',
+                        'api_full_response': '',
+                        'api_phone': '',
+                        'api_isoCode': '',
+                        'api_service': '',
+                        'api_message_preview': '',
+                        'api_sender': '',
+                        'api_template_id': '',
+                        'api_flash': '',
+                        'api_unicode': '',
+                        'api_length': '',
+                        'api_units': '',
+                        'api_charges': '',
+                        'api_source': '',
+                        'api_submit_time': '',
+                        'api_submit_at': '',
+                        'api_deliv_time': '',
+                        'api_deliv_at': '',
+                        'api_response_message': '',
+                        'api_page': '',
+                        'api_length_count': ''
                     })
                     self.log_message(f"⭐ Skipped {name} - No phone")
                     progress.progress((i+1)/total)
                     continue
                 
                 phone = self.format_phone_number(emp_no_raw)
-                success, resp_text = self.send_sms_via_qik(name, phone, drive_link, prev_month_str)
+                success, resp_text, message_id = self.send_sms_via_qik(name, phone, drive_link, prev_month_str)
                 
                 if success:
                     sent_count += 1
-                    results.append({
+                    result_entry = {
                         'row': i+1,
                         'name': name,
                         'phone': phone,
-                        'status': 'sent',
-                        'response': resp_text
-                    })
-                    self.log_message(f"✅ SMS sent: {name} ({phone})")
+                        'send_status': 'sent',
+                        'send_response': resp_text[:500] if len(resp_text) > 500 else resp_text,
+                        'message_id': message_id if message_id else '',
+                        # Status API fields (to be filled later)
+                        'api_raw_status': '',
+                        'api_full_response': '',
+                        'api_phone': '',
+                        'api_isoCode': '',
+                        'api_service': '',
+                        'api_message_preview': '',
+                        'api_sender': '',
+                        'api_template_id': '',
+                        'api_flash': '',
+                        'api_unicode': '',
+                        'api_length': '',
+                        'api_units': '',
+                        'api_charges': '',
+                        'api_source': '',
+                        'api_submit_time': '',
+                        'api_submit_at': '',
+                        'api_deliv_time': '',
+                        'api_deliv_at': '',
+                        'api_response_message': '',
+                        'api_page': '',
+                        'api_length_count': ''
+                    }
+                    results.append(result_entry)
+                    
+                    if message_id:
+                        message_ids_list.append(message_id)
+                        self.log_message(f"✅ SMS sent: {name} ({phone}) - Message ID: {message_id}")
+                    else:
+                        self.log_message(f"✅ SMS sent: {name} ({phone}) - No message_id in response")
                 else:
                     failed_count += 1
                     results.append({
                         'row': i+1,
                         'name': name,
                         'phone': phone,
-                        'status': 'failed',
-                        'response': resp_text
+                        'send_status': 'failed',
+                        'send_response': resp_text[:500] if len(resp_text) > 500 else resp_text,
+                        'message_id': '',
+                        # Status API fields (empty for failed)
+                        'api_raw_status': '',
+                        'api_full_response': '',
+                        'api_phone': '',
+                        'api_isoCode': '',
+                        'api_service': '',
+                        'api_message_preview': '',
+                        'api_sender': '',
+                        'api_template_id': '',
+                        'api_flash': '',
+                        'api_unicode': '',
+                        'api_length': '',
+                        'api_units': '',
+                        'api_charges': '',
+                        'api_source': '',
+                        'api_submit_time': '',
+                        'api_submit_at': '',
+                        'api_deliv_time': '',
+                        'api_deliv_at': '',
+                        'api_response_message': '',
+                        'api_page': '',
+                        'api_length_count': ''
                     })
-                    self.log_message(f"❌ SMS failed: {name} - {resp_text}")
+                    self.log_message(f"❌ SMS failed: {name} - {resp_text[:100]}")
                 
-                time.sleep(0.25)
+                time.sleep(0.25)  # Rate limiting
                 progress.progress((i+1)/total)
+            
+            # ========== ADDED DELAY BEFORE STATUS CHECK ==========
+            if message_ids_list:
+                self.log_message(f"⏳ Waiting 10 seconds before checking delivery status for {len(message_ids_list)} messages...")
+                status.info(f"⏳ Waiting 10 seconds before checking delivery status...")
+                time.sleep(10)  # Add delay to allow API to update status to DELIVERED
+            # ====================================================
+            
+            # Second pass: Fetch delivery status for all sent messages that have message_ids
+            if message_ids_list:
+                status.info(f"📊 Fetching delivery status for {len(message_ids_list)} messages...")
+                
+                # Get status for all message_ids
+                status_results = self.get_sms_status(message_ids_list)
+                
+                # Update results with raw API data
+                for result in results:
+                    if result.get('message_id') and result['message_id'] in status_results:
+                        api_data = status_results[result['message_id']]
+                        
+                        # Populate all fields with raw API data
+                        result['api_raw_status'] = api_data.get('raw_status', '')
+                        result['api_full_response'] = api_data.get('full_response', '')
+                        result['api_phone'] = api_data.get('raw_phone', '')
+                        result['api_isoCode'] = api_data.get('raw_isoCode', '')
+                        result['api_service'] = api_data.get('raw_service', '')
+                        result['api_message_preview'] = api_data.get('raw_message', '')[:200] if api_data.get('raw_message') else ''
+                        result['api_sender'] = api_data.get('raw_sender', '')
+                        result['api_template_id'] = api_data.get('raw_template_id', '')
+                        result['api_flash'] = api_data.get('raw_flash', '')
+                        result['api_unicode'] = api_data.get('raw_unicode', '')
+                        result['api_length'] = api_data.get('raw_length', '')
+                        result['api_units'] = api_data.get('raw_units', '')
+                        result['api_charges'] = api_data.get('raw_charges', '')
+                        result['api_source'] = api_data.get('raw_source', '')
+                        result['api_submit_time'] = api_data.get('raw_submit_time', '')
+                        result['api_submit_at'] = api_data.get('raw_submit_at', '')
+                        result['api_deliv_time'] = api_data.get('raw_deliv_time', '')
+                        result['api_deliv_at'] = api_data.get('raw_deliv_at', '')
+                        result['api_response_message'] = api_data.get('api_message', '')
+                        result['api_page'] = api_data.get('api_page', '')
+                        result['api_length_count'] = api_data.get('api_length', '')
+                        
+                        self.log_message(f"📬 Status update for {result['name']}: Raw Status = {result['api_raw_status']}")
+                    elif result.get('message_id'):
+                        result['api_raw_status'] = 'status_unavailable'
+                        result['api_full_response'] = 'Status API returned no data for this message_id'
+                        self.log_message(f"⚠️ No status data for {result['name']} (ID: {result['message_id']})")
             
             progress.empty()
             status.empty()
             
+            # Display Results
             st.markdown('<div class="section-header">📊 SMS Distribution Results</div>', unsafe_allow_html=True)
             
-            col1, col2, col3 = st.columns(3)
+            # Calculate stats from raw status
+            delivered_count = sum(1 for r in results if r.get('api_raw_status') == 'DELIVERED')
+            processed_count = sum(1 for r in results if r.get('api_raw_status') == 'PROCESSED')
+            sent_count_actual = sum(1 for r in results if r.get('send_status') == 'sent')
+            
+            col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
                 st.markdown(f"""
                 <div class="metric-card">
                     <div class="metric-icon">✅</div>
                     <div class="metric-label">Sent</div>
-                    <div class="metric-value" style="color: #28a745;">{sent_count}</div>
+                    <div class="metric-value" style="color: #28a745;">{sent_count_actual}</div>
                 </div>
                 """, unsafe_allow_html=True)
             
             with col2:
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-icon">❌</div>
-                    <div class="metric-label">Failed</div>
-                    <div class="metric-value" style="color: #dc3545;">{failed_count}</div>
+                    <div class="metric-icon">📬</div>
+                    <div class="metric-label">DELIVERED</div>
+                    <div class="metric-value" style="color: #667eea;">{delivered_count}</div>
                 </div>
                 """, unsafe_allow_html=True)
             
             with col3:
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-icon">⭐</div>
-                    <div class="metric-label">Skipped</div>
-                    <div class="metric-value" style="color: #ffc107;">{skipped_count}</div>
+                    <div class="metric-icon">⚙️</div>
+                    <div class="metric-label">PROCESSED</div>
+                    <div class="metric-value" style="color: #ffc107;">{processed_count}</div>
                 </div>
                 """, unsafe_allow_html=True)
             
-            self.log_message(f"📊 SMS Summary - Sent: {sent_count}, Failed: {failed_count}, Skipped: {skipped_count}")
+            with col4:
+                other_status = sent_count_actual - delivered_count - processed_count
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-icon">⏳</div>
+                    <div class="metric-label">Other Status</div>
+                    <div class="metric-value" style="color: #ff9800;">{other_status}</div>
+                </div>
+                """, unsafe_allow_html=True)
             
+            with col5:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-icon">❌</div>
+                    <div class="metric-label">Failed/Skipped</div>
+                    <div class="metric-value" style="color: #dc3545;">{failed_count + skipped_count}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Create detailed report DataFrame with all raw fields
             report_df = pd.DataFrame(results)
-            csv_buf = report_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                "📥 Download SMS Report (CSV)",
-                data=csv_buf,
-                file_name=f"sms_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-                type="primary"
-            )
+            
+            # Define column order with all raw API fields
+            column_order = [
+                'row', 'name', 'phone', 
+                'send_status', 'send_response', 'message_id',
+                'api_raw_status', 'api_submit_time', 'api_deliv_time',
+                'api_units', 'api_charges', 'api_phone', 'api_sender',
+                'api_message_preview', 'api_full_response'
+            ]
+            
+            # Add all other api_ columns that might exist
+            api_columns = [col for col in report_df.columns if col.startswith('api_') and col not in column_order]
+            column_order.extend(api_columns)
+            
+            # Ensure all columns exist
+            column_order = [c for c in column_order if c in report_df.columns]
+            report_df = report_df[column_order]
+            
+            # Display summary table
+            st.markdown("**📋 Detailed Report Preview**")
+            st.dataframe(report_df.head(10), use_container_width=True)
+            
+            # Download buttons
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # CSV Download (without full API response to keep it manageable)
+                csv_df = report_df.copy()
+                if 'api_full_response' in csv_df.columns:
+                    csv_df['api_full_response'] = csv_df['api_full_response'].str[:200]
+                csv_buf = csv_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    "📥 Download SMS Report (CSV)",
+                    data=csv_buf,
+                    file_name=f"sms_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    type="primary"
+                )
+            
+            with col2:
+                # Excel Download with full data
+                excel_buf = BytesIO()
+                with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
+                    # Main report sheet with all data
+                    report_df.to_excel(writer, index=False, sheet_name='SMS Report')
+                    
+                    # Status summary sheet
+                    summary_data = {
+                        'Metric': [
+                            'Total SMS Attempted', 
+                            'Successfully Sent',
+                            'API Status - DELIVERED',
+                            'API Status - PROCESSED',
+                            'API Status - Other',
+                            'Failed to Send',
+                            'Skipped (No Drive Link)', 
+                            'Skipped (No Phone Number)'
+                        ],
+                        'Count': [
+                            sent_count + failed_count,
+                            sent_count,
+                            delivered_count,
+                            processed_count,
+                            sent_count - delivered_count - processed_count,
+                            failed_count,
+                            sum(1 for r in results if r.get('send_status') == 'skipped_no_link'),
+                            sum(1 for r in results if r.get('send_status') == 'skipped_no_phone')
+                        ]
+                    }
+                    summary_df = pd.DataFrame(summary_data)
+                    summary_df.to_excel(writer, index=False, sheet_name='Summary')
+                    
+                    # Raw API responses sheet (only if there's data)
+                    api_responses = report_df[['row', 'name', 'message_id', 'api_raw_status', 'api_full_response']].copy()
+                    api_responses = api_responses[api_responses['api_full_response'].str.len() > 0]
+                    if not api_responses.empty:
+                        api_responses.to_excel(writer, index=False, sheet_name='Raw API Responses')
+                
+                st.download_button(
+                    "📊 Download SMS Report (Excel)",
+                    data=excel_buf.getvalue(),
+                    file_name=f"sms_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    type="secondary"
+                )
+            
+            # Show success message with raw status counts
+            st.success(f"✅ SMS processing complete! Sent: {sent_count_actual} | Raw Status - DELIVERED: {delivered_count}, PROCESSED: {processed_count}, Other: {sent_count_actual - delivered_count - processed_count}")
+            
+            self.log_message(f"📊 SMS Summary - Sent: {sent_count_actual}, DELIVERED: {delivered_count}, PROCESSED: {processed_count}, Failed: {failed_count}, Skipped: {skipped_count}")
             
         except Exception as e:
             st.error(f"❌ SMS processing error: {str(e)}")
             self.log_message(f"❌ SMS error: {str(e)}")
-
     def reset_session(self):
         st.session_state.files_processed = False
         st.session_state.processing_complete = False
