@@ -15,11 +15,19 @@ from dotenv import load_dotenv
 import requests
 import json
 import extra_streamlit_components as stx  # REQUIRED FOR PERSISTENCE
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 # Load environment variables
 load_dotenv()
+# Add this right after loading .env
+import os
+from typing import Optional
 
-# Configuration
+#configuration
 QIK_URL = os.getenv("QIK_URL")
 QIK_AUTH_TOKEN = os.getenv("QIK_AUTH_TOKEN")
 QIK_SENDER = os.getenv("QIK_SENDER")
@@ -29,6 +37,13 @@ QIK_SHORTEN_URL = os.getenv("QIK_SHORTEN_URL")
 HR_USERNAME = os.getenv("HR_USERNAME")
 HR_PASSWORD = os.getenv("HR_PASSWORD")
 SHARED_DRIVE_ID = os.getenv("SHARED_DRIVE_ID")
+
+# Email Configuration (Add these to your .env file)
+EMAIL_SMTP_SERVER = os.getenv("EMAIL_SMTP_SERVER", "smtp.gmail.com")
+EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
+EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+REPORT_RECIPIENT = os.getenv("REPORT_RECIPIENT", "rajiv@wedtree.com")
 
 # --- CACHED RESOURCES ---
 @st.cache_resource
@@ -114,7 +129,8 @@ class PayslipDistributorStreamlit:
                 'selected_items': [],
                 'drive_page': 0,
                 'items_per_page': 20,
-                'force_rerun': False
+                'force_rerun': False,
+                'last_sms_report_data': None  # Store last SMS report for email sending
             }
 
             for key, val in defaults.items():
@@ -429,6 +445,79 @@ class PayslipDistributorStreamlit:
         </style>
         """, unsafe_allow_html=True)
 
+    # --- EMAIL FUNCTIONALITY ---
+    def send_email_report(self, report_data, report_filename, report_buffer):
+        """
+        Send SMS report via email with attachment
+        """
+        try:
+            if not EMAIL_SENDER or not EMAIL_PASSWORD:
+                self.log_message("⚠️ Email credentials not configured. Skipping email report.")
+                return False, "Email credentials not configured"
+            
+            # Create email
+            msg = MIMEMultipart()
+            msg['From'] = EMAIL_SENDER
+            msg['To'] = REPORT_RECIPIENT
+            msg['Subject'] = f"SMS Distribution Report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # Email body
+            body = f"""
+            <html>
+            <body>
+                <h2>SMS Distribution Report</h2>
+                <p><strong>Generated on:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                
+                <h3>Summary Statistics:</h3>
+                <table border="1" cellpadding="5" style="border-collapse: collapse;">
+                    <tr style="background-color: #f2f2f2;">
+                        <th>Metric</th>
+                        <th>Count</th>
+                    </tr>
+                    <tr><td>Total SMS Attempted</td><td>{report_data.get('total_attempted', 0)}</td></tr>
+                    <tr><td>Successfully Sent</td><td>{report_data.get('sent_count', 0)}</td></tr>
+                    <tr><td>API Status - DELIVERED</td><td>{report_data.get('delivered_count', 0)}</td></tr>
+                    <tr><td>API Status - PROCESSED</td><td>{report_data.get('processed_count', 0)}</td></tr>
+                    <tr><td>Failed to Send</td><td>{report_data.get('failed_count', 0)}</td></tr>
+                    <tr><td>Skipped (No Drive Link)</td><td>{report_data.get('skipped_no_link', 0)}</td></tr>
+                    <tr><td>Skipped (No Phone Number)</td><td>{report_data.get('skipped_no_phone', 0)}</td></tr>
+                </table>
+                
+                <p><strong>Report file attached:</strong> {report_filename}</p>
+                
+                <hr>
+                <p style="color: #666; font-size: 12px;">This is an automated report from the Payslip Distribution System.</p>
+            </body>
+            </html>
+            """
+            
+            msg.attach(MIMEText(body, 'html'))
+            
+            # Attach the report file
+            report_buffer.seek(0)
+            attachment = MIMEBase('application', 'octet-stream')
+            attachment.set_payload(report_buffer.read())
+            encoders.encode_base64(attachment)
+            attachment.add_header(
+                'Content-Disposition',
+                f'attachment; filename={report_filename}'
+            )
+            msg.attach(attachment)
+            
+            # Send email
+            with smtplib.SMTP(EMAIL_SMTP_SERVER, EMAIL_SMTP_PORT) as server:
+                server.starttls()
+                server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+                server.send_message(msg)
+            
+            self.log_message(f"📧 Email report sent successfully to {REPORT_RECIPIENT}")
+            return True, "Email sent successfully"
+            
+        except Exception as e:
+            error_msg = f"Failed to send email: {str(e)}"
+            self.log_message(f"❌ {error_msg}")
+            return False, error_msg
+
     # --- CALLBACKS & ACTIONS ---
     
     def cb_navigate_folder(self, folder_id, folder_name):
@@ -502,6 +591,22 @@ class PayslipDistributorStreamlit:
         st.session_state.drive_initialized = False
         st.session_state.force_rerun = True
         self.log_message("🔌 Drive disconnected manually")
+
+    def cb_send_email_report(self):
+        """Callback to send email report manually"""
+        if st.session_state.last_sms_report_data:
+            with st.spinner("📧 Sending email report..."):
+                success, message = self.send_email_report(
+                    st.session_state.last_sms_report_data['summary'],
+                    st.session_state.last_sms_report_data['filename'],
+                    st.session_state.last_sms_report_data['buffer']
+                )
+                if success:
+                    st.success(f"✅ {message}")
+                else:
+                    st.error(f"❌ {message}")
+        else:
+            st.warning("No report data available to send")
 
     # --- RENDER METHODS ---
 
@@ -934,6 +1039,20 @@ class PayslipDistributorStreamlit:
                      disabled=not uploaded):
             if uploaded:
                 self.process_and_send_sms(uploaded)
+        
+        # Add email report button if report data exists
+        if st.session_state.last_sms_report_data:
+            st.markdown("---")
+            st.markdown('<div class="section-header">📧 Email Report</div>', unsafe_allow_html=True)
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.info(f"Report will be sent to: {REPORT_RECIPIENT}")
+            with col2:
+                st.button("📧 Send Report via Email", 
+                         use_container_width=True, 
+                         type="primary",
+                         on_click=self.cb_send_email_report)
 
     def render_activity_log(self):
         """Render activity log"""
@@ -1703,7 +1822,7 @@ class PayslipDistributorStreamlit:
         return results
 
     def process_and_send_sms(self, excel_file):
-        """Enhanced SMS sending with raw API response capture"""
+        """Enhanced SMS sending with raw API response capture and email report"""
         try:
             df = pd.read_excel(excel_file, dtype=str).fillna("")
             
@@ -1940,13 +2059,13 @@ class PayslipDistributorStreamlit:
             progress.empty()
             status.empty()
             
-            # Display Results
-            st.markdown('<div class="section-header">📊 SMS Distribution Results</div>', unsafe_allow_html=True)
-            
             # Calculate stats from raw status
             delivered_count = sum(1 for r in results if r.get('api_raw_status') == 'DELIVERED')
             processed_count = sum(1 for r in results if r.get('api_raw_status') == 'PROCESSED')
             sent_count_actual = sum(1 for r in results if r.get('send_status') == 'sent')
+            
+            # Display Results
+            st.markdown('<div class="section-header">📊 SMS Distribution Results</div>', unsafe_allow_html=True)
             
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
@@ -2019,9 +2138,65 @@ class PayslipDistributorStreamlit:
             st.markdown("**📋 Detailed Report Preview**")
             st.dataframe(report_df.head(10), use_container_width=True)
             
+            # Prepare report for email
+            report_filename = f"sms_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            excel_buf = BytesIO()
+            with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
+                # Main report sheet with all data
+                report_df.to_excel(writer, index=False, sheet_name='SMS Report')
+                
+                # Status summary sheet
+                summary_data = {
+                    'Metric': [
+                        'Total SMS Attempted', 
+                        'Successfully Sent',
+                        'API Status - DELIVERED',
+                        'API Status - PROCESSED',
+                        'API Status - Other',
+                        'Failed to Send',
+                        'Skipped (No Drive Link)', 
+                        'Skipped (No Phone Number)'
+                    ],
+                    'Count': [
+                        sent_count + failed_count,
+                        sent_count,
+                        delivered_count,
+                        processed_count,
+                        sent_count - delivered_count - processed_count,
+                        failed_count,
+                        sum(1 for r in results if r.get('send_status') == 'skipped_no_link'),
+                        sum(1 for r in results if r.get('send_status') == 'skipped_no_phone')
+                    ]
+                }
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, index=False, sheet_name='Summary')
+                
+                # Raw API responses sheet (only if there's data)
+                api_responses = report_df[['row', 'name', 'message_id', 'api_raw_status', 'api_full_response']].copy()
+                api_responses = api_responses[api_responses['api_full_response'].str.len() > 0]
+                if not api_responses.empty:
+                    api_responses.to_excel(writer, index=False, sheet_name='Raw API Responses')
+            
+            excel_buf.seek(0)
+            
+            # Store report data for email sending
+            st.session_state.last_sms_report_data = {
+                'filename': report_filename,
+                'buffer': excel_buf,
+                'summary': {
+                    'total_attempted': sent_count + failed_count,
+                    'sent_count': sent_count,
+                    'delivered_count': delivered_count,
+                    'processed_count': processed_count,
+                    'failed_count': failed_count,
+                    'skipped_no_link': sum(1 for r in results if r.get('send_status') == 'skipped_no_link'),
+                    'skipped_no_phone': sum(1 for r in results if r.get('send_status') == 'skipped_no_phone')
+                }
+            }
+            
             # Download buttons
             st.markdown("---")
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             
             with col1:
                 # CSV Download (without full API response to keep it manageable)
@@ -2040,60 +2215,53 @@ class PayslipDistributorStreamlit:
             
             with col2:
                 # Excel Download with full data
-                excel_buf = BytesIO()
-                with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
-                    # Main report sheet with all data
-                    report_df.to_excel(writer, index=False, sheet_name='SMS Report')
-                    
-                    # Status summary sheet
-                    summary_data = {
-                        'Metric': [
-                            'Total SMS Attempted', 
-                            'Successfully Sent',
-                            'API Status - DELIVERED',
-                            'API Status - PROCESSED',
-                            'API Status - Other',
-                            'Failed to Send',
-                            'Skipped (No Drive Link)', 
-                            'Skipped (No Phone Number)'
-                        ],
-                        'Count': [
-                            sent_count + failed_count,
-                            sent_count,
-                            delivered_count,
-                            processed_count,
-                            sent_count - delivered_count - processed_count,
-                            failed_count,
-                            sum(1 for r in results if r.get('send_status') == 'skipped_no_link'),
-                            sum(1 for r in results if r.get('send_status') == 'skipped_no_phone')
-                        ]
-                    }
-                    summary_df = pd.DataFrame(summary_data)
-                    summary_df.to_excel(writer, index=False, sheet_name='Summary')
-                    
-                    # Raw API responses sheet (only if there's data)
-                    api_responses = report_df[['row', 'name', 'message_id', 'api_raw_status', 'api_full_response']].copy()
-                    api_responses = api_responses[api_responses['api_full_response'].str.len() > 0]
-                    if not api_responses.empty:
-                        api_responses.to_excel(writer, index=False, sheet_name='Raw API Responses')
-                
+                excel_buf_download = BytesIO(excel_buf.getvalue())
                 st.download_button(
                     "📊 Download SMS Report (Excel)",
-                    data=excel_buf.getvalue(),
-                    file_name=f"sms_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    data=excel_buf_download,
+                    file_name=report_filename,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
                     type="secondary"
                 )
+            
+            with col3:
+                # Email report button
+                if st.button("📧 Send Report via Email", use_container_width=True, type="secondary"):
+                    with st.spinner("📧 Sending email report..."):
+                        success, message = self.send_email_report(
+                            st.session_state.last_sms_report_data['summary'],
+                            report_filename,
+                            BytesIO(excel_buf.getvalue())
+                        )
+                        if success:
+                            st.success(f"✅ {message}")
+                        else:
+                            st.error(f"❌ {message}")
             
             # Show success message with raw status counts
             st.success(f"✅ SMS processing complete! Sent: {sent_count_actual} | Raw Status - DELIVERED: {delivered_count}, PROCESSED: {processed_count}, Other: {sent_count_actual - delivered_count - processed_count}")
             
             self.log_message(f"📊 SMS Summary - Sent: {sent_count_actual}, DELIVERED: {delivered_count}, PROCESSED: {processed_count}, Failed: {failed_count}, Skipped: {skipped_count}")
             
+            # Auto-send email if configured
+            if EMAIL_SENDER and EMAIL_PASSWORD:
+                with st.spinner("📧 Auto-sending report via email..."):
+                    success, message = self.send_email_report(
+                        st.session_state.last_sms_report_data['summary'],
+                        report_filename,
+                        BytesIO(excel_buf.getvalue())
+                    )
+                    if success:
+                        st.info(f"📧 Report auto-sent to {REPORT_RECIPIENT}")
+                        self.log_message(f"📧 Auto-email sent to {REPORT_RECIPIENT}")
+                    else:
+                        self.log_message(f"⚠️ Auto-email failed: {message}")
+            
         except Exception as e:
             st.error(f"❌ SMS processing error: {str(e)}")
             self.log_message(f"❌ SMS error: {str(e)}")
+            
     def reset_session(self):
         st.session_state.files_processed = False
         st.session_state.processing_complete = False
